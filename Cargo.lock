@@ -190,6 +190,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive-where"
+version = "1.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e73f2692d4bd3cac41dca28934a39894200c9fabf49586d77d0e5954af1d7902"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -208,6 +219,7 @@ dependencies = [
  "log",
  "num",
  "plonky2",
+ "plonky2_gate_utils",
  "plonky2_rsa",
  "plonky2_u32",
  "sha2",
@@ -515,6 +527,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "plonky2_gate_utils"
+version = "0.1.0"
+source = "git+https://github.com/dgulotta/plonky2-gate-utils.git#7eb60fdd15ba654dc740e48c2603078cb5dc91f2"
+dependencies = [
+ "anyhow",
+ "derive-where",
+ "plonky2",
+]
+
+[[package]]
 name = "plonky2_maybe_rayon"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -526,13 +548,14 @@ dependencies = [
 [[package]]
 name = "plonky2_rsa"
 version = "0.1.0"
-source = "git+https://github.com/dgulotta/plonky2-rsa.git#ae3c54bceaefd600289e08253195e21ec414dd4e"
+source = "git+https://github.com/dgulotta/plonky2-rsa.git?branch=fast#8ac1f25db929ae60e2997cda6928569adfd925c3"
 dependencies = [
  "anyhow",
  "itertools 0.14.0",
  "num",
  "num-bigint",
  "plonky2",
+ "plonky2_gate_utils",
  "plonky2_u32",
  "static_assertions",
 ]

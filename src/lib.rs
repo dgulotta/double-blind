@@ -22,10 +22,13 @@ use plonky2::{
     },
 };
 use plonky2_rsa::gadgets::{
-    biguint::{BigUintTarget, CircuitBuilderBiguint, WitnessBigUint},
+    biguint::{CircuitBuilderBigUint, WitnessBigUint, split_biguint},
     rsa::pow_65537,
 };
 use sha2::Digest;
+
+const BITS: usize = 27;
+type BigUintTarget = plonky2_rsa::gadgets::biguint::BigUintTarget<BITS>;
 
 #[derive(Debug)]
 enum ProverError {
@@ -67,8 +70,8 @@ const D: usize = 2;
 type C = PoseidonGoldilocksConfig;
 
 const DEPTH: usize = 30;
-const RSA_LIMBS: usize = 64;
-const SHA_LIMBS: usize = 16;
+const RSA_LIMBS: usize = 4096usize.div_ceil(BITS);
+const SHA_LIMBS: usize = 512usize.div_ceil(BITS);
 
 // the 5 is just a placeholder
 pub static RSA_MESSAGE: LazyLock<BigUint> = LazyLock::new(|| BigUint::from_u64(5).unwrap());
@@ -244,9 +247,10 @@ fn hash_message(message: &[u8]) -> BigUint {
 }
 
 fn biguint_to_limbs(x: &BigUint, n_limbs: usize) -> impl Iterator<Item = u32> {
-    x.iter_u32_digits()
-        .chain(core::iter::repeat(0))
-        .take(n_limbs)
+    let mut v = split_biguint::<BITS>(x);
+    assert!(v.len() <= n_limbs);
+    v.resize(n_limbs, 0);
+    v.into_iter()
 }
 
 pub struct SignatureCircuitData {
@@ -259,13 +263,12 @@ pub struct SignatureCircuitData {
 
 pub fn build_circuit() -> SignatureCircuitData {
     let mut builder = CircuitBuilder::new(CircuitConfig::standard_recursion_zk_config());
-    let rsa_message_t = builder.constant_biguint(&RSA_MESSAGE);
+    let rsa_message_t: BigUintTarget = builder.constant_biguint(&RSA_MESSAGE);
     let double_blind_key_t = builder.add_virtual_biguint_target(RSA_LIMBS);
     let user_key_t = builder.add_virtual_biguint_target(RSA_LIMBS);
     let rsa_message_computed = pow_65537(&mut builder, &double_blind_key_t, &user_key_t);
     builder.connect_biguint(&rsa_message_t, &rsa_message_computed);
-    let user_key_vec = user_key_t.limbs.iter().map(|t| t.0).collect();
-    let user_key_hash = builder.hash_n_to_hash_no_pad::<PoseidonHash>(user_key_vec);
+    let user_key_hash = builder.hash_n_to_hash_no_pad::<PoseidonHash>(user_key_t.limbs.clone());
     let merkle_proof_t = add_virtual_merkle_proof(&mut builder, DEPTH);
     builder.connect_hashes(user_key_hash, merkle_proof_t.item);
     for x in merkle_proof_t.root.elements {
@@ -274,8 +277,8 @@ pub fn build_circuit() -> SignatureCircuitData {
     let message_hash_t = builder.add_virtual_biguint_target(SHA_LIMBS);
     // By registering the message as a public input, we make the Fiat-Shamir challenges
     // depend on the message.
-    for limb in message_hash_t.limbs.iter() {
-        builder.register_public_input(limb.0);
+    for &limb in message_hash_t.limbs.iter() {
+        builder.register_public_input(limb);
     }
     let data = builder.build();
     SignatureCircuitData {

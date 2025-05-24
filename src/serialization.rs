@@ -1,7 +1,9 @@
 use plonky2::{
-    field::extension::Extendable,
+    field::{extension::Extendable, goldilocks_field::GoldilocksField},
+    gadgets::{range_check::LowHighGenerator, split_join::WireSplitGenerator},
     gates::{
         arithmetic_base::{ArithmeticBaseGenerator, ArithmeticGate},
+        base_sum::{BaseSplitGenerator, BaseSumGate},
         constant::ConstantGate,
         noop::NoopGate,
         poseidon::{PoseidonGate, PoseidonGenerator},
@@ -14,7 +16,8 @@ use plonky2::{
     read_gate_impl, read_generator_impl,
     util::serialization::{GateSerializer, WitnessGeneratorSerializer, gate_serialization::log},
 };
-use plonky2_rsa::gadgets::biguint::BigUintDivRemGenerator;
+use plonky2_gate_utils::{GateAdapter, RecursiveGenerator};
+use plonky2_rsa::gadgets::biguint::{BigUintDivRemGenerator, ConvolutionGate};
 use plonky2_u32::gates::{
     add_many_u32::{U32AddManyGate, U32AddManyGenerator},
     arithmetic_u32::{U32ArithmeticGate, U32ArithmeticGenerator},
@@ -25,33 +28,36 @@ use plonky2_u32::gates::{
 pub struct DBGateSerializer;
 pub struct DBGeneratorSerializer;
 
-impl<F: RichField + Extendable<D>, const D: usize> GateSerializer<F, D> for DBGateSerializer {
+type F = GoldilocksField;
+const D: usize = 2;
+
+impl GateSerializer<F, D> for DBGateSerializer {
     impl_gate_serializer!(DBGateSerializer,
         ArithmeticGate,
+        BaseSumGate<2>,
         ComparisonGate<F,D>,
         ConstantGate,
+        GateAdapter<F, ConvolutionGate>,
         NoopGate,
         PoseidonGate<F,D>,
-        PublicInputGate,
-        U32AddManyGate<F,D>,
-        U32ArithmeticGate<F,D>,
-        U32RangeCheckGate<F,D>
+        PublicInputGate
     );
 }
 
-impl<F: RichField + Extendable<D>, const D: usize> WitnessGeneratorSerializer<F, D>
-    for DBGeneratorSerializer
-{
+use crate::BITS;
+
+impl WitnessGeneratorSerializer<F, D> for DBGeneratorSerializer {
     impl_generator_serializer!(DBGeneratorSerializer,
         ArithmeticBaseGenerator<F,D>,
-        BigUintDivRemGenerator<F,D>,
+        BaseSplitGenerator<2>,
+        BigUintDivRemGenerator<F,D,BITS>,
         ComparisonGenerator<F,D>,
         ConstantGenerator<F>,
         CopyGenerator,
+        LowHighGenerator,
         PoseidonGenerator<F,D>,
         RandomValueGenerator,
-        U32AddManyGenerator<F,D>,
-        U32ArithmeticGenerator<F,D>,
-        U32RangeCheckGenerator<F,D>
+        RecursiveGenerator<1,F,ConvolutionGate>,
+        WireSplitGenerator
     );
 }
