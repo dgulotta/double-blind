@@ -1,3 +1,4 @@
+pub mod base64;
 pub mod serialization;
 
 use std::sync::LazyLock;
