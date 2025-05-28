@@ -1,3 +1,4 @@
+/*
 use std::{any::Any, collections::BTreeSet, fs::File, io::Write};
 
 use double_blind::serialization::{DBGateSerializer, DBGeneratorSerializer};
@@ -32,8 +33,9 @@ fn write_data() {
         .unwrap();
     file.write(&bytes).unwrap();
 }
+*/
 
 fn main() {
     //print_gate_and_generator_names();
-    write_data()
+    // write_data()
 }

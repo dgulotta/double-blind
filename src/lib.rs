@@ -1,34 +1,40 @@
+pub mod ed25519;
+pub mod rsa;
 pub mod serialization;
 
-use std::sync::LazyLock;
-
-use num::{BigUint, FromPrimitive};
+use anyhow::anyhow;
+use ed25519::{
+    Ed25519Targets, build_ed25519, ed25519_example_signature, ed25519_key_target_data,
+    set_ed25519_targets,
+};
+use num::BigUint;
 use plonky2::{
     field::{goldilocks_field::GoldilocksField, types::Field},
     hash::{
         hash_types::{HashOut, HashOutTarget},
-        hashing::{hash_n_to_hash_no_pad, hash_n_to_m_no_pad},
+        hashing::hash_n_to_hash_no_pad,
         poseidon::{PoseidonHash, PoseidonPermutation},
     },
     iop::{
-        target::BoolTarget,
+        target::{BoolTarget, Target},
         witness::{PartialWitness, WitnessWrite},
     },
     plonk::{
         circuit_builder::CircuitBuilder,
-        circuit_data::{CircuitConfig, CircuitData, VerifierCircuitData, VerifierOnlyCircuitData},
-        config::{GenericConfig, PoseidonGoldilocksConfig},
+        circuit_data::{CircuitConfig, CircuitData, VerifierCircuitData},
+        config::PoseidonGoldilocksConfig,
         proof::ProofWithPublicInputs,
     },
 };
-use plonky2_rsa::gadgets::{
-    biguint::{CircuitBuilderBigUint, WitnessBigUint, split_biguint},
-    rsa::pow_65537,
-};
+use rsa::{RSATargets, build_rsa, rsa_example_signature, rsa_key_target_data, set_rsa_targets};
 use sha2::Digest;
+use ssh_key::{Mpint, PublicKey, SshSig, public::KeyData};
 
-const BITS: usize = 27;
-type BigUintTarget = plonky2_rsa::gadgets::biguint::BigUintTarget<BITS>;
+const MAX_KEY_LIMBS: usize = crate::rsa::RSA_LIMBS;
+const SHA_LIMBS: usize = 512usize.div_ceil(63);
+
+const DOUBLE_BLIND_MESSAGE: &str = "E PLURIBUS UNUM; DO NOT SHARE\n";
+const DOUBLE_BLIND_NAMESPACE: &str = "double-blind.xyz";
 
 #[derive(Debug)]
 enum ProverError {
@@ -70,22 +76,45 @@ const D: usize = 2;
 type C = PoseidonGoldilocksConfig;
 
 const DEPTH: usize = 30;
-const RSA_LIMBS: usize = 4096usize.div_ceil(BITS);
-const SHA_LIMBS: usize = 512usize.div_ceil(BITS);
 
-// the 5 is just a placeholder
-pub static RSA_MESSAGE: LazyLock<BigUint> = LazyLock::new(|| BigUint::from_u64(5).unwrap());
-pub static PUBLIC_EXPONENT: LazyLock<BigUint> = LazyLock::new(|| BigUint::from_u64(65537).unwrap());
+pub fn split_biguint_63(x: &BigUint) -> Vec<F> {
+    let n_limbs = x.bits().div_ceil(63) as usize;
+    let mut ans = Vec::with_capacity(n_limbs);
+    let mut it = x.iter_u64_digits();
+    let mut leftover = 0;
+    let mut leftover_bits = 0;
+    let full_mask = (1 << 63) - 1;
+    while ans.len() < n_limbs {
+        if leftover_bits >= 63 {
+            ans.push(F::from_canonical_u64(leftover & full_mask));
+            leftover >>= 63;
+            leftover_bits -= 63;
+        } else {
+            let low = leftover;
+            leftover = it.next().unwrap_or(0);
+            let high_bits = 63 - leftover_bits;
+            let mask = (1 << high_bits) - 1;
+            let high = leftover & mask;
+            ans.push(F::from_canonical_u64(low | (high << leftover_bits)));
+            leftover >>= high_bits;
+            leftover_bits = 64 - high_bits;
+        }
+    }
+    ans
+}
 
-fn find_public_key<'a>(public_keys: &'a [BigUint], double_blind_key: &BigUint) -> Option<usize> {
+fn find_public_key<'a>(public_keys: &'a [PublicKey], double_blind_key: &SshSig) -> Option<usize> {
     public_keys
         .iter()
         .enumerate()
         .filter_map(|(n, k)| {
-            if &double_blind_key.modpow(&PUBLIC_EXPONENT, k) == &*RSA_MESSAGE {
-                Some(n)
-            } else {
-                None
+            match k.verify(
+                DOUBLE_BLIND_NAMESPACE,
+                DOUBLE_BLIND_MESSAGE.as_bytes(),
+                double_blind_key,
+            ) {
+                Ok(()) => Some(n),
+                Err(_) => None,
             }
         })
         .next()
@@ -233,104 +262,127 @@ fn set_merkle_proof(
     witness.set_hash_target(target.root, proof.root)
 }
 
-fn hash_biguint(x: &BigUint, limbs: usize) -> HashOut<F> {
-    let digits: Vec<_> = biguint_to_limbs(x, limbs)
-        .map(|x| F::from_canonical_u32(x))
-        .collect();
-    hash_n_to_hash_no_pad::<F, PoseidonPermutation<F>>(&digits)
+fn hash_public_key(k: &PublicKey) -> anyhow::Result<HashOut<F>> {
+    let mut data = match k.key_data() {
+        KeyData::Rsa(d) => rsa_key_target_data(d),
+        KeyData::Ed25519(d) => ed25519_key_target_data(d),
+        _ => return Err(anyhow!("Unsupported key type")),
+    };
+    data.resize(MAX_KEY_LIMBS, F::ZERO);
+    Ok(hash_n_to_hash_no_pad::<F, PoseidonPermutation<F>>(&data))
 }
 
-fn hash_message(message: &[u8]) -> BigUint {
+fn hash_message(message: &[u8]) -> Vec<F> {
     let mut hasher = sha2::Sha512::new();
     hasher.update(message);
-    BigUint::from_bytes_le(&hasher.finalize())
+    let hash_bigint = BigUint::from_bytes_le(&hasher.finalize());
+    split_biguint_63(&hash_bigint)
 }
 
-fn biguint_to_limbs(x: &BigUint, n_limbs: usize) -> impl Iterator<Item = u32> {
-    let mut v = split_biguint::<BITS>(x);
-    assert!(v.len() <= n_limbs);
-    v.resize(n_limbs, 0);
-    v.into_iter()
+fn mpint_to_biguint(x: &Mpint) -> BigUint {
+    BigUint::from_bytes_be(x.as_positive_bytes().unwrap())
 }
 
 pub struct SignatureCircuitData {
     pub data: CircuitData<F, C, D>,
+    use_rsa_t: BoolTarget,
     merkle_proof_t: MerkleProofTarget,
-    double_blind_key_t: BigUintTarget,
-    user_key_t: BigUintTarget,
-    message_hash_t: BigUintTarget,
+    message_hash_t: Vec<Target>,
+    rsa_targets: RSATargets,
+    ed25519_targets: Ed25519Targets,
 }
 
 pub fn build_circuit() -> SignatureCircuitData {
     let mut builder = CircuitBuilder::new(CircuitConfig::standard_recursion_zk_config());
-    let rsa_message_t: BigUintTarget = builder.constant_biguint(&RSA_MESSAGE);
-    let double_blind_key_t = builder.add_virtual_biguint_target(RSA_LIMBS);
-    let user_key_t = builder.add_virtual_biguint_target(RSA_LIMBS);
-    let rsa_message_computed = pow_65537(&mut builder, &double_blind_key_t, &user_key_t);
-    builder.connect_biguint(&rsa_message_t, &rsa_message_computed);
-    let user_key_hash = builder.hash_n_to_hash_no_pad::<PoseidonHash>(user_key_t.limbs.clone());
+    let zero = builder.zero();
+    let use_rsa_t = builder.add_virtual_bool_target_safe();
+    let rsa_targets = build_rsa(&mut builder);
+    let rsa_hash_data = rsa_targets.public_key_targets();
+    let ed25519_targets = build_ed25519(&mut builder);
+    let ed25519_hash_data = ed25519_targets.public_key_targets();
+    let user_key_t = (0..MAX_KEY_LIMBS)
+        .map(|i| {
+            builder._if(
+                use_rsa_t,
+                rsa_hash_data.get(i).copied().unwrap_or(zero),
+                ed25519_hash_data.get(i).copied().unwrap_or(zero),
+            )
+        })
+        .collect();
+    let user_key_hash = builder.hash_n_to_hash_no_pad::<PoseidonHash>(user_key_t);
     let merkle_proof_t = add_virtual_merkle_proof(&mut builder, DEPTH);
     builder.connect_hashes(user_key_hash, merkle_proof_t.item);
     for x in merkle_proof_t.root.elements {
         builder.register_public_input(x);
     }
-    let message_hash_t = builder.add_virtual_biguint_target(SHA_LIMBS);
+    let message_hash_t = builder.add_virtual_targets(SHA_LIMBS);
     // By registering the message as a public input, we make the Fiat-Shamir challenges
     // depend on the message.
-    for &limb in message_hash_t.limbs.iter() {
+    for &limb in message_hash_t.iter() {
         builder.register_public_input(limb);
     }
     let data = builder.build();
     SignatureCircuitData {
         data,
+        use_rsa_t,
         merkle_proof_t,
-        double_blind_key_t,
-        user_key_t,
         message_hash_t,
+        rsa_targets,
+        ed25519_targets,
     }
 }
 
 pub fn generate_group_signature(
     message: &[u8],
-    public_keys: &[BigUint],
-    double_blind_key: &BigUint,
+    public_keys: &[PublicKey],
+    double_blind_key: &SshSig,
     circuit: &SignatureCircuitData,
-) -> Result<ProofWithPublicInputs<F, C, D>, anyhow::Error> {
+) -> anyhow::Result<ProofWithPublicInputs<F, C, D>> {
     let user_key_index =
         find_public_key(public_keys, double_blind_key).ok_or(ProverError::PublicKeyNotFound)?;
-    let hashed_public_keys: Vec<_> = public_keys
-        .iter()
-        .map(|k| hash_biguint(k, RSA_LIMBS))
-        .collect();
+    let key_data = public_keys[user_key_index].key_data();
+    let hashed_public_keys_r: anyhow::Result<Vec<_>> =
+        public_keys.iter().map(hash_public_key).collect();
+    let hashed_public_keys = hashed_public_keys_r?;
     let merkle_proof = generate_merkle_proof(&hashed_public_keys, user_key_index, DEPTH);
     let message_hash = hash_message(message);
     let mut pw = PartialWitness::new();
     set_merkle_proof(&mut pw, &circuit.merkle_proof_t, &merkle_proof)?;
-    pw.set_biguint_target(&circuit.double_blind_key_t, &double_blind_key)?;
-    pw.set_biguint_target(&circuit.user_key_t, &public_keys[user_key_index])?;
-    pw.set_biguint_target(&circuit.message_hash_t, &message_hash)?;
+    if key_data.is_rsa() {
+        set_rsa_targets(&mut pw, &circuit.rsa_targets, double_blind_key)?;
+        set_ed25519_targets(
+            &mut pw,
+            &circuit.ed25519_targets,
+            &ed25519_example_signature(),
+        )?;
+        pw.set_bool_target(circuit.use_rsa_t, true)?;
+    } else {
+        set_rsa_targets(&mut pw, &circuit.rsa_targets, &rsa_example_signature())?;
+        set_ed25519_targets(&mut pw, &circuit.ed25519_targets, double_blind_key)?;
+        pw.set_bool_target(circuit.use_rsa_t, false)?;
+    }
+    pw.set_target_arr(&circuit.message_hash_t, &message_hash)?;
     circuit.data.prove(pw)
 }
 
 pub fn verify_group_signature(
     message: &[u8],
-    public_keys: &[BigUint],
+    public_keys: &[PublicKey],
     data: &VerifierCircuitData<F, C, D>,
     proof: ProofWithPublicInputs<F, C, D>,
 ) -> Result<(), anyhow::Error> {
     let message_hash = hash_message(message);
-    let hashed_public_keys: Vec<_> = public_keys
-        .iter()
-        .map(|k| hash_biguint(k, RSA_LIMBS))
-        .collect();
+    let hashed_public_keys_r: anyhow::Result<Vec<_>> =
+        public_keys.iter().map(|k| hash_public_key(k)).collect();
+    let hashed_public_keys = hashed_public_keys_r?;
     let root = compute_merkle_root(&hashed_public_keys, DEPTH);
     for (n, x) in root.elements.into_iter().enumerate() {
         if x != proof.public_inputs[n] {
             Err(VerifierError::MerkleRoot)?;
         }
     }
-    for (n, x) in biguint_to_limbs(&message_hash, SHA_LIMBS).enumerate() {
-        if F::from_canonical_u32(x) != proof.public_inputs[n + 4] {
+    for n in 0..SHA_LIMBS {
+        if message_hash[n] != proof.public_inputs[n + 4] {
             Err(VerifierError::MessageHash)?;
         }
     }
@@ -339,28 +391,19 @@ pub fn verify_group_signature(
 
 #[cfg(test)]
 mod test {
-    use std::sync::LazyLock;
-
-    use num::{BigUint, FromPrimitive, Num};
-    use plonky2::field::{goldilocks_field::GoldilocksField, types::Field};
-
     use crate::{
-        DEPTH, RSA_LIMBS, RSA_MESSAGE, build_circuit, compute_merkle_root,
-        generate_group_signature, hash_biguint, hash_message, verify_group_signature,
+        DEPTH, build_circuit, compute_merkle_root,
+        ed25519::ed25519_example_public_key,
+        generate_group_signature, hash_message, hash_public_key,
+        rsa::{rsa_example_public_key, rsa_example_signature},
+        verify_group_signature,
     };
 
-    const MODULUS_STR: &str = "a709e2f84ac0e21eb0caa018cf7f697f774e96f8115fc2359e9cf60b1dd8d4048d974cdf8422bef6be3c162b04b916f7ea2133f0e3e4e0eee164859bd9c1e0ef0357c142f4f633b4add4aab86c8f8895cd33fbf4e024d9a3ad6be6267570b4a72d2c34354e0139e74ada665a16a2611490debb8e131a6cffc7ef25e74240803dd71a4fcd953c988111b0aa9bbc4c57024fc5e8c4462ad9049c7f1abed859c63455fa6d58b5cc34a3d3206ff74b9e96c336dbacf0cdd18ed0c66796ce00ab07f36b24cbe3342523fd8215a8e77f89e86a08db911f237459388dee642dae7cb2644a03e71ed5c6fa5077cf4090fafa556048b536b879a88f628698f0c7b420c4b7";
-    const PRIVATE_KEY_STR: &str = "10f22727e552e2c86ba06d7ed6de28326eef76d0128327cd64c5566368fdc1a9f740ad8dd221419a5550fc8c14b33fa9f058b9fa4044775aaf5c66a999a7da4d4fdb8141c25ee5294ea6a54331d045f25c9a5f7f47960acbae20fa27ab5669c80eaf235a1d0b1c22b8d750a191c0f0c9b3561aaa4934847101343920d84f24334d3af05fede0e355911c7db8b8de3bf435907c855c3d7eeede4f148df830b43dd360b43692239ac10e566f138fb4b30fb1af0603cfcf0cd8adf4349a0d0b93bf89804e7c2e24ca7615e51af66dccfdb71a1204e2107abbee4259f2cac917fafe3b029baf13c4dde7923c47ee3fec248390203a384b9eb773c154540c5196bce1";
-    static MODULUS: LazyLock<BigUint> =
-        LazyLock::new(|| BigUint::from_str_radix(MODULUS_STR, 16).unwrap());
-    static PRIVATE_KEY: LazyLock<BigUint> =
-        LazyLock::new(|| BigUint::from_str_radix(PRIVATE_KEY_STR, 16).unwrap());
-
     #[test]
-    fn test_verify_signature() -> Result<(), anyhow::Error> {
+    fn test_verify_signature_rsa() -> Result<(), anyhow::Error> {
         let message = "Hello!";
-        let public_keys = [MODULUS.clone(), BigUint::from_u64(5).unwrap()];
-        let double_blind_key = RSA_MESSAGE.modpow(&PRIVATE_KEY, &MODULUS);
+        let public_keys = [rsa_example_public_key(), ed25519_example_public_key()];
+        let double_blind_key = rsa_example_signature();
         let circuit = build_circuit();
         let proof =
             generate_group_signature(message.as_ref(), &public_keys, &double_blind_key, &circuit)?;
@@ -375,12 +418,12 @@ mod test {
     #[test]
     fn test_reject_wrong_public_keys_same_root() -> Result<(), anyhow::Error> {
         let message = "Hello!";
-        let public_keys = [MODULUS.clone(), BigUint::from_u64(5).unwrap()];
-        let double_blind_key = RSA_MESSAGE.modpow(&PRIVATE_KEY, &MODULUS);
+        let public_keys = [rsa_example_public_key()];
+        let double_blind_key = rsa_example_signature();
         let circuit = build_circuit();
         let proof =
             generate_group_signature(message.as_ref(), &public_keys, &double_blind_key, &circuit)?;
-        let modified_public_keys = [BigUint::from_u64(5).unwrap()];
+        let modified_public_keys = [ed25519_example_public_key()];
         assert!(
             verify_group_signature(
                 message.as_ref(),
@@ -396,17 +439,15 @@ mod test {
     #[test]
     fn test_reject_wrong_public_keys_and_root() -> Result<(), anyhow::Error> {
         let message = "Hello!";
-        let public_keys = [MODULUS.clone(), BigUint::from_u64(5).unwrap()];
-        let double_blind_key = RSA_MESSAGE.modpow(&PRIVATE_KEY, &MODULUS);
+        let public_keys = [rsa_example_public_key()];
+        let double_blind_key = rsa_example_signature();
         let circuit = build_circuit();
         let mut proof =
             generate_group_signature(message.as_ref(), &public_keys, &double_blind_key, &circuit)?;
-        let modified_public_keys = [BigUint::from_u64(5).unwrap()];
-        let modified_public_key_hashes = [hash_biguint(&modified_public_keys[0], RSA_LIMBS)];
+        let modified_public_keys = [ed25519_example_public_key()];
+        let modified_public_key_hashes = [hash_public_key(&modified_public_keys[0]).unwrap()];
         let modified_root = compute_merkle_root(&modified_public_key_hashes, DEPTH);
-        for (i, &x) in modified_root.elements.iter().enumerate() {
-            proof.public_inputs[i] = x;
-        }
+        proof.public_inputs[..4].copy_from_slice(&modified_root.elements);
         assert!(
             verify_group_signature(
                 message.as_ref(),
@@ -422,8 +463,8 @@ mod test {
     #[test]
     fn test_reject_different_message_same_hash() -> Result<(), anyhow::Error> {
         let message = "Hello!";
-        let public_keys = [MODULUS.clone()];
-        let double_blind_key = RSA_MESSAGE.modpow(&PRIVATE_KEY, &MODULUS);
+        let public_keys = [rsa_example_public_key()];
+        let double_blind_key = rsa_example_signature();
         let circuit = build_circuit();
         let proof =
             generate_group_signature(message.as_ref(), &public_keys, &double_blind_key, &circuit)?;
@@ -443,15 +484,13 @@ mod test {
     fn test_reject_different_message_and_hash() -> Result<(), anyhow::Error> {
         let message = "Hello!";
         let modified_message = "Goodbye!";
-        let public_keys = [MODULUS.clone()];
-        let double_blind_key = RSA_MESSAGE.modpow(&PRIVATE_KEY, &MODULUS);
+        let public_keys = [rsa_example_public_key()];
+        let double_blind_key = rsa_example_signature();
         let circuit = build_circuit();
         let mut proof =
             generate_group_signature(message.as_ref(), &public_keys, &double_blind_key, &circuit)?;
         let hash = hash_message(modified_message.as_ref());
-        for (i, x) in hash.iter_u32_digits().enumerate() {
-            proof.public_inputs[i + 4] = GoldilocksField::from_canonical_u32(x);
-        }
+        proof.public_inputs[4..].copy_from_slice(&hash);
         assert!(
             verify_group_signature(
                 modified_message.as_ref(),
