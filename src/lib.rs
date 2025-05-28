@@ -3,6 +3,7 @@ pub mod rsa;
 pub mod serialization;
 
 use anyhow::anyhow;
+use base64::Engine;
 use ed25519::{
     Ed25519Targets, build_ed25519, ed25519_example_signature, ed25519_key_target_data,
     set_ed25519_targets,
@@ -21,7 +22,7 @@ use plonky2::{
     },
     plonk::{
         circuit_builder::CircuitBuilder,
-        circuit_data::{CircuitConfig, CircuitData, VerifierCircuitData},
+        circuit_data::{CircuitConfig, CircuitData, CommonCircuitData, VerifierCircuitData},
         config::PoseidonGoldilocksConfig,
         proof::ProofWithPublicInputs,
     },
@@ -103,7 +104,10 @@ pub fn split_biguint_63(x: &BigUint) -> Vec<F> {
     ans
 }
 
-fn find_public_key<'a>(public_keys: &'a [PublicKey], double_blind_key: &SshSig) -> Option<usize> {
+pub fn find_public_key<'a>(
+    public_keys: &'a [PublicKey],
+    double_blind_key: &SshSig,
+) -> Option<usize> {
     public_keys
         .iter()
         .enumerate()
@@ -365,6 +369,26 @@ pub fn generate_group_signature(
     circuit.data.prove(pw)
 }
 
+pub fn write_group_signature(proof: &ProofWithPublicInputs<F, C, D>) -> String {
+    let mut buf = "===BEGIN DOUBLE BLIND SIGNATURE===\n".to_string();
+    let proof_bytes = proof.to_bytes();
+    base64::engine::general_purpose::STANDARD.encode_string(&proof_bytes, &mut buf);
+    buf.push_str("\n===END DOUBLE BLIND SIGNATURE===");
+    buf
+}
+
+pub fn read_group_signature(
+    sig: &str,
+    common_data: &CommonCircuitData<F, D>,
+) -> anyhow::Result<ProofWithPublicInputs<F, C, D>> {
+    let line = sig
+        .lines()
+        .nth(1)
+        .ok_or_else(|| anyhow!("Signature format not recognized"))?;
+    let decoded = base64::engine::general_purpose::STANDARD.decode(line)?;
+    ProofWithPublicInputs::from_bytes(decoded, common_data)
+}
+
 pub fn verify_group_signature(
     message: &[u8],
     public_keys: &[PublicKey],
@@ -394,9 +418,9 @@ mod test {
     use crate::{
         DEPTH, build_circuit, compute_merkle_root,
         ed25519::ed25519_example_public_key,
-        generate_group_signature, hash_message, hash_public_key,
+        generate_group_signature, hash_message, hash_public_key, read_group_signature,
         rsa::{rsa_example_public_key, rsa_example_signature},
-        verify_group_signature,
+        verify_group_signature, write_group_signature,
     };
 
     #[test]
@@ -412,6 +436,24 @@ mod test {
             &public_keys,
             &circuit.data.verifier_data(),
             proof,
+        )
+    }
+
+    #[test]
+    fn test_verify_read_write() -> Result<(), anyhow::Error> {
+        let message = "Hello!";
+        let public_keys = [rsa_example_public_key(), ed25519_example_public_key()];
+        let double_blind_key = rsa_example_signature();
+        let circuit = build_circuit();
+        let proof =
+            generate_group_signature(message.as_ref(), &public_keys, &double_blind_key, &circuit)?;
+        let output = write_group_signature(&proof);
+        let proof2 = read_group_signature(&output, &circuit.data.common)?;
+        verify_group_signature(
+            message.as_ref(),
+            &public_keys,
+            &circuit.data.verifier_data(),
+            proof2,
         )
     }
 
