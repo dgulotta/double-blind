@@ -16,7 +16,7 @@ use ssh_key::{
     public::{KeyData, RsaPublicKey},
 };
 
-const BITS: usize = 27;
+pub(super) const BITS: usize = 27;
 type BigUintTarget = plonky2_rsa::gadgets::biguint::BigUintTarget<BITS>;
 
 pub(super) const RSA_LIMBS: usize = 4096usize.div_ceil(BITS);
