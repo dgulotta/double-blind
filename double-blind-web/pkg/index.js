@@ -1,7 +1,6 @@
-import init, { validate_keys, Circuit, Test } from './double_blind_web.js';
+import init, { validate_keys, Circuit } from './double_blind_web.js';
 
 let circuit;
-let test_object;
 
 function update_key_inputs() {
   const pk = document.getElementById("public-keys");
