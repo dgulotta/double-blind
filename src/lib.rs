@@ -369,9 +369,18 @@ pub fn generate_group_signature(
     circuit.data.prove(pw)
 }
 
-pub fn write_group_signature(proof: &ProofWithPublicInputs<F, C, D>) -> String {
+pub struct GroupSignature {
+    pub keys: Vec<PublicKey>,
+    pub proof: ProofWithPublicInputs<F, C, D>,
+}
+
+pub fn write_group_signature(signature: &GroupSignature) -> String {
     let mut buf = "===BEGIN DOUBLE BLIND SIGNATURE===\n".to_string();
-    let proof_bytes = proof.to_bytes();
+    for key in signature.keys.iter() {
+        buf.push_str(&key.to_openssh().unwrap());
+        buf.push('\n');
+    }
+    let proof_bytes = signature.proof.to_bytes();
     base64::engine::general_purpose::STANDARD.encode_string(&proof_bytes, &mut buf);
     buf.push_str("\n===END DOUBLE BLIND SIGNATURE===");
     buf
@@ -380,13 +389,19 @@ pub fn write_group_signature(proof: &ProofWithPublicInputs<F, C, D>) -> String {
 pub fn read_group_signature(
     sig: &str,
     common_data: &CommonCircuitData<F, D>,
-) -> anyhow::Result<ProofWithPublicInputs<F, C, D>> {
-    let line = sig
-        .lines()
-        .nth(1)
-        .ok_or_else(|| anyhow!("Signature format not recognized"))?;
-    let decoded = base64::engine::general_purpose::STANDARD.decode(line)?;
-    ProofWithPublicInputs::from_bytes(decoded, common_data)
+) -> anyhow::Result<GroupSignature> {
+    let lines: Vec<_> = sig.lines().collect();
+    if lines.len() < 4 {
+        return Err(anyhow!("Signature format not recognized"));
+    }
+    let keys_r: ssh_key::Result<Vec<_>> = lines[1..lines.len() - 2]
+        .iter()
+        .map(|s| PublicKey::from_openssh(s))
+        .collect();
+    let keys = keys_r?;
+    let decoded = base64::engine::general_purpose::STANDARD.decode(lines[lines.len() - 2])?;
+    let proof = ProofWithPublicInputs::from_bytes(decoded, common_data)?;
+    Ok(GroupSignature { keys, proof })
 }
 
 pub fn verify_group_signature(
@@ -416,7 +431,7 @@ pub fn verify_group_signature(
 #[cfg(test)]
 mod test {
     use crate::{
-        DEPTH, build_circuit, compute_merkle_root,
+        DEPTH, GroupSignature, build_circuit, compute_merkle_root,
         ed25519::ed25519_example_public_key,
         generate_group_signature, hash_message, hash_public_key, read_group_signature,
         rsa::{rsa_example_public_key, rsa_example_signature},
@@ -447,13 +462,18 @@ mod test {
         let circuit = build_circuit();
         let proof =
             generate_group_signature(message.as_ref(), &public_keys, &double_blind_key, &circuit)?;
-        let output = write_group_signature(&proof);
-        let proof2 = read_group_signature(&output, &circuit.data.common)?;
+        let sig = GroupSignature {
+            keys: public_keys.to_vec(),
+            proof,
+        };
+        let output = write_group_signature(&sig);
+        let sig2 = read_group_signature(&output, &circuit.data.common)?;
+        assert_eq!(public_keys.as_slice(), sig.keys.as_slice());
         verify_group_signature(
             message.as_ref(),
-            &public_keys,
+            &sig2.keys,
             &circuit.data.verifier_data(),
-            proof2,
+            sig2.proof,
         )
     }
 

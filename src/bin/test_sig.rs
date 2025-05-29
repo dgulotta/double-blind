@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::{fs::File, io::Write, time::Instant};
 
 use double_blind::{
     build_circuit,
@@ -20,9 +20,23 @@ fn main() -> anyhow::Result<()> {
     let proof =
         generate_group_signature(message.as_ref(), &public_keys, &double_blind_key, &circuit)?;
     let proof_finish_time = Instant::now();
+    println!("Proof len {}", proof.to_bytes().len());
     println!("{}", (proof_finish_time - build_finish_time).as_secs_f32());
+    println!("Compressing proof");
+    let compressed = proof.compress(
+        &circuit.data.verifier_only.circuit_digest,
+        &circuit.data.common,
+    )?;
+    let compress_finish_time = Instant::now();
+    println!("Compressed len {}", compressed.to_bytes().len());
+    println!(
+        "{}",
+        (compress_finish_time - proof_finish_time).as_secs_f32()
+    );
+    let mut f = File::create("/tmp/db_proof")?;
+    f.write_all(&compressed.to_bytes())?;
     println!("Verifying proof");
-    circuit.data.verify(proof)?;
+    circuit.data.verify_compressed(compressed)?;
     let verify_finish_time = Instant::now();
     println!("{}", (verify_finish_time - proof_finish_time).as_secs_f32());
     Ok(())
