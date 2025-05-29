@@ -12,6 +12,7 @@ plonky2 = "1.1.0"
 plonky2_gate_utils = { git = "https://github.com/dgulotta/plonky2-gate-utils.git" }
 plonky2_rsa = { git = "https://github.com/dgulotta/plonky2-rsa.git", branch="fast" }
 plonky2_u32 = { git = "https://github.com/dgulotta/plonky2-u32.git" }
+serde = { version = "1.0.219", features = ["derive"] }
 sha2 = "0.10.9"
 ssh-key = { version = "0.6.7", features = ["ed25519", "rsa"] }
 

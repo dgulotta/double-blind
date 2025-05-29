@@ -28,6 +28,7 @@ use plonky2::{
     },
 };
 use rsa::{RSATargets, build_rsa, rsa_example_signature, rsa_key_target_data, set_rsa_targets};
+use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use ssh_key::{Mpint, PublicKey, SshSig, public::KeyData};
 

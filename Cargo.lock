@@ -307,6 +307,7 @@ dependencies = [
  "plonky2_gate_utils",
  "plonky2_rsa",
  "plonky2_u32",
+ "serde",
  "sha2",
  "ssh-key",
 ]
@@ -315,6 +316,7 @@ dependencies = [
 name = "double-blind-web"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "double-blind",
  "ssh-key",
  "wasm-bindgen",
