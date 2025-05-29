@@ -1,0 +1,19 @@
+[package]
+name = "double-blind"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.98"
+base64 = "0.22.1"
+log = "0.4.27"
+num = { version = "0.4.3", features = ["num-bigint"] }
+plonky2 = "1.1.0"
+plonky2_gate_utils = { git = "https://github.com/dgulotta/plonky2-gate-utils.git" }
+plonky2_rsa = { git = "https://github.com/dgulotta/plonky2-rsa.git", branch="fast" }
+plonky2_u32 = { git = "https://github.com/dgulotta/plonky2-u32.git" }
+sha2 = "0.10.9"
+ssh-key = { version = "0.6.7", features = ["ed25519", "rsa"] }
+
+[dev-dependencies]
+env_logger = "0.11.8"

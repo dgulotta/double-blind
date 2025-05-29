@@ -104,10 +104,17 @@ pub fn split_biguint_63(x: &BigUint) -> Vec<F> {
     ans
 }
 
-pub fn find_public_key<'a>(
-    public_keys: &'a [PublicKey],
-    double_blind_key: &SshSig,
-) -> Option<usize> {
+pub fn check_key_match(public_key: &PublicKey, double_blind_key: &SshSig) -> bool {
+    public_key
+        .verify(
+            DOUBLE_BLIND_NAMESPACE,
+            DOUBLE_BLIND_MESSAGE.as_bytes(),
+            double_blind_key,
+        )
+        .is_ok()
+}
+
+pub fn find_public_key(public_keys: &[PublicKey], double_blind_key: &SshSig) -> Option<usize> {
     public_keys
         .iter()
         .enumerate()

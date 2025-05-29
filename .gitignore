@@ -1,2 +1,6 @@
 /target
 circuit-data
+/double-blind-web/pkg/double_blind_web.d.ts
+/double-blind-web/pkg/double_blind_web.js
+/double-blind-web/pkg/double_blind_web_bg.wasm
+/double-blind-web/pkg/double_blind_web_bg.wasm.d.ts
