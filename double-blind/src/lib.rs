@@ -6,7 +6,7 @@ use anyhow::anyhow;
 use base64::Engine;
 use ed25519::{
     Ed25519Targets, build_ed25519, ed25519_example_signature, ed25519_key_target_data,
-    set_ed25519_targets,
+    is_ed25519_key_supported, set_ed25519_targets,
 };
 use num::BigUint;
 use plonky2::{
@@ -26,9 +26,13 @@ use plonky2::{
         config::PoseidonGoldilocksConfig,
         proof::ProofWithPublicInputs,
     },
+    util::serialization::IoResult,
 };
-use rsa::{RSATargets, build_rsa, rsa_example_signature, rsa_key_target_data, set_rsa_targets};
-use serde::{Deserialize, Serialize};
+use rsa::{
+    RSATargets, build_rsa, is_rsa_key_supported, rsa_example_signature, rsa_key_target_data,
+    set_rsa_targets,
+};
+use serialization::DBGateSerializer;
 use sha2::Digest;
 use ssh_key::{Mpint, PublicKey, SshSig, public::KeyData};
 
@@ -41,6 +45,7 @@ const DOUBLE_BLIND_NAMESPACE: &str = "double-blind.xyz";
 #[derive(Debug)]
 enum ProverError {
     PublicKeyNotFound,
+    UnsupportedKey,
 }
 
 #[derive(Debug)]
@@ -54,6 +59,9 @@ impl std::fmt::Display for ProverError {
         match self {
             ProverError::PublicKeyNotFound => {
                 write!(f, "DoubleBlind key does not match any public key")
+            }
+            ProverError::UnsupportedKey => {
+                write!(f, "Public key format is unsupported")
             }
         }
     }
@@ -419,6 +427,11 @@ pub fn verify_group_signature(
     proof: ProofWithPublicInputs<F, C, D>,
 ) -> Result<(), anyhow::Error> {
     let message_hash = hash_message(message);
+    for k in public_keys {
+        if !is_key_supported(k) {
+            return Err(ProverError::UnsupportedKey.into());
+        }
+    }
     let hashed_public_keys_r: anyhow::Result<Vec<_>> =
         public_keys.iter().map(|k| hash_public_key(k)).collect();
     let hashed_public_keys = hashed_public_keys_r?;
@@ -434,6 +447,23 @@ pub fn verify_group_signature(
         }
     }
     data.verify(proof)
+}
+
+pub fn serialize_verifer(data: &VerifierCircuitData<F, C, D>) -> IoResult<Vec<u8>> {
+    data.to_bytes(&DBGateSerializer)
+}
+
+pub fn deserialize_verifier(data: Vec<u8>) -> IoResult<VerifierCircuitData<F, C, D>> {
+    VerifierCircuitData::from_bytes(data, &DBGateSerializer)
+}
+
+pub fn is_key_supported(public_key: &PublicKey) -> bool {
+    match public_key.key_data() {
+        KeyData::Rsa(k) => is_rsa_key_supported(k),
+        KeyData::Ed25519(k) => is_ed25519_key_supported(k),
+        // we don't plan to implement other algorithms
+        _ => false,
+    }
 }
 
 #[cfg(test)]

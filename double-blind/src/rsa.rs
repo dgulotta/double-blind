@@ -29,6 +29,7 @@ use crate::mpint_to_biguint;
 
 use super::{D, F};
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct RSATargets {
     pub signature: BigUintTarget,
     pub modulus: BigUintTarget,
@@ -73,6 +74,11 @@ pub fn build_rsa(builder: &mut CircuitBuilder<F, D>) -> RSATargets {
     let expected = builder.constant_biguint(&DB_MSG_RSA);
     builder.connect_biguint(&digest, &expected);
     RSATargets { signature, modulus }
+}
+
+pub fn is_rsa_key_supported(key: &RsaPublicKey) -> bool {
+    key.n.as_positive_bytes().is_some_and(|b| b.len() == 512)
+        && key.e.as_positive_bytes() == Some(&[1, 0, 1])
 }
 
 pub fn set_rsa_targets(

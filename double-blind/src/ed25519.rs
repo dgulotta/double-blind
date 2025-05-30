@@ -6,6 +6,7 @@ use ssh_key::{PublicKey, SshSig, public::Ed25519PublicKey};
 
 use super::{D, F};
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Ed25519Targets;
 
 impl Ed25519Targets {
@@ -33,6 +34,10 @@ pub fn ed25519_example_signature() -> SshSig {
 /// key and Double Blind key.
 pub fn build_ed25519(_builder: &mut CircuitBuilder<F, D>) -> Ed25519Targets {
     Ed25519Targets
+}
+
+pub fn is_ed25519_key_supported(_key: &Ed25519PublicKey) -> bool {
+    true
 }
 
 pub fn set_ed25519_targets(
