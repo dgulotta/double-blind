@@ -8,7 +8,7 @@ Running the demo
 To install dependencies:
 ```sh
 rustup target add wasm32-unknown-unknown
-cargo install wasm-bindgen
+cargo install wasm-bindgen-cli
 ```
 
 To build the WebAssembly module:
