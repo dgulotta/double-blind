@@ -9,5 +9,6 @@ crate-type = ["cdylib"]
 [dependencies]
 anyhow = "1.0.98"
 double-blind.path = "../double-blind"
+plonky2 = "1.1.0"
 ssh-key = "0.6.7"
 wasm-bindgen = "0.2.100"

@@ -81,9 +81,9 @@ impl std::fmt::Display for VerifierError {
 impl core::error::Error for ProverError {}
 impl core::error::Error for VerifierError {}
 
-type F = GoldilocksField;
-const D: usize = 2;
-type C = PoseidonGoldilocksConfig;
+pub type F = GoldilocksField;
+pub const D: usize = 2;
+pub type C = PoseidonGoldilocksConfig;
 
 const DEPTH: usize = 30;
 
