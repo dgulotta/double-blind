@@ -14,6 +14,10 @@ impl Ed25519Targets {
     pub fn public_key_targets(&self) -> Vec<Target> {
         Vec::new()
     }
+    /// Returns the targets containing the signature.
+    pub fn signature_targets(&self) -> Vec<Target> {
+        Vec::new()
+    }
 }
 
 /// Returns the internal representation of the public key.  This function

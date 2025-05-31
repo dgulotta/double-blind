@@ -17,8 +17,13 @@ fn main() -> anyhow::Result<()> {
     let build_finish_time = Instant::now();
     println!("{}", (build_finish_time - start_time).as_secs_f32());
     println!("Generating proof");
-    let proof =
-        generate_group_signature(message.as_ref(), &public_keys, &double_blind_key, &circuit)?;
+    let proof = generate_group_signature(
+        message.as_ref(),
+        &public_keys,
+        &double_blind_key,
+        &circuit,
+        &None,
+    )?;
     let proof_finish_time = Instant::now();
     println!("Proof len {}", proof.to_bytes().len());
     println!("{}", (proof_finish_time - build_finish_time).as_secs_f32());

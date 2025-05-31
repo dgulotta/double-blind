@@ -1,4 +1,4 @@
-import init, { validate_keys, Circuit } from './double_blind_web.js';
+import init, { validate_keys, Circuit, Verifier } from './double_blind_web.js';
 
 let circuit;
 
@@ -16,7 +16,7 @@ function update_key_inputs() {
 }
 
 function check_verify_enabled() {
-  verify.disabled = (circuit === undefined)
+  //verify.disabled = (circuit === undefined)
 }
 
 function generate_circuit() {
@@ -33,7 +33,7 @@ function generate_signature() {
   const pk = document.getElementById("public-keys");
   const dk = document.getElementById("double-blind-key");
   const signature = document.getElementById("signature");
-  signature.value = circuit.generate_signature(msg.value, pk.value, dk.value);
+  signature.value = circuit.prover().generate_signature(msg.value, pk.value, dk.value).signature();
 }
 
 function verify_signature() {
@@ -43,7 +43,7 @@ function verify_signature() {
   const signature = document.getElementById("signature");
   const status = document.getElementById("status");
   try {
-    pk.value = circuit.read_signature(msg.value, signature.value);
+    pk.value = new Verifier().read_signature(msg.value, signature.value).public_keys();
     status.innerText = "Signature successfully verified!";
   } catch(error) {
     status.innerText = error;

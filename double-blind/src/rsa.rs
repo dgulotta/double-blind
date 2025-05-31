@@ -40,6 +40,10 @@ impl RSATargets {
     pub fn public_key_targets(&self) -> Vec<Target> {
         self.modulus.limbs.clone()
     }
+    /// Returns the targets containing the signature.
+    pub fn signature_targets(&self) -> Vec<Target> {
+        self.signature.limbs.clone()
+    }
 }
 
 fn public_key_modulus(key: &RsaPublicKey) -> BigUint {
