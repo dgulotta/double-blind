@@ -469,11 +469,7 @@ pub fn is_key_supported(public_key: &PublicKey) -> bool {
 #[cfg(test)]
 mod test {
     use crate::{
-        DEPTH, GroupSignature, build_circuit, compute_merkle_root,
-        ed25519::ed25519_example_public_key,
-        generate_group_signature, hash_message, hash_public_key, read_group_signature,
-        rsa::{rsa_example_public_key, rsa_example_signature},
-        verify_group_signature, write_group_signature,
+        build_circuit, compute_merkle_root, ed25519::{ed25519_example_public_key, ed25519_example_signature}, generate_group_signature, hash_message, hash_public_key, read_group_signature, rsa::{rsa_example_public_key, rsa_example_signature}, verify_group_signature, write_group_signature, GroupSignature, DEPTH
     };
 
     #[test]

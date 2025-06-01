@@ -112,3 +112,77 @@ pub fn set_ed25519_targets(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use plonky2::{
+        field::types::PrimeField64, iop::witness::PartialWitness, plonk::{
+            circuit_builder::CircuitBuilder,
+            circuit_data::{CircuitConfig, VerifierCircuitData},
+            config::PoseidonGoldilocksConfig,
+        }
+    };
+
+    /// helper type‑aliases reused below
+    type CFG = PoseidonGoldilocksConfig;
+    type FF  = F;          // Goldilocks
+
+    /// the demo key shipped in `test_keys/`
+    fn example_key() -> Ed25519PublicKey {
+        match &super::ed25519_example_public_key().key_data() {
+            KeyData::Ed25519(pk) => pk.clone(),
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn key_target_roundtrip() {
+        let pk = example_key();
+        let limbs = ed25519_key_target_data(&pk);
+
+        // rebuild the canonical (x , y) from the limb vector
+        // and compare with a fresh decompression of the same key.
+
+        // 1. split the limbs back into (x , y)
+        let limbs_per_coord = limbs.len() / 2;
+        let (x_limbs, y_limbs) = limbs.split_at(limbs_per_coord);
+
+        let mut to_big = |ls: &[FF]| {
+            let mut acc = num::BigUint::default();
+            for (i, &limb) in ls.iter().enumerate() {
+                let limb64 = limb.to_canonical_u64();
+                acc |= num::BigUint::from(limb64) << (32 * i);
+            }
+            acc
+        };
+
+        let x = to_big(x_limbs);
+        let y = to_big(y_limbs);
+
+        let dec = plonky2_ed25519::curve::eddsa::point_decompress(pk.as_ref()).unwrap();
+        assert_eq!(dec.x.to_canonical_biguint(), x);
+        assert_eq!(dec.y.to_canonical_biguint(), y);
+    }
+
+    #[test]
+    fn circuit_prove_verify() -> anyhow::Result<()> {
+        // ── build a minimal circuit that just embeds our gadget ──────────────
+        let mut builder = CircuitBuilder::<FF, D>::new(
+            CircuitConfig::standard_recursion_config(),
+        );
+        let targets = build_ed25519(&mut builder);
+
+        // No public inputs for this mini‑circuit
+        let data = builder.build::<CFG>();
+
+        // ── make a witness ---------------------------------------------------
+        let sig = super::ed25519_example_signature();   // carries the pub‑key
+        let mut pw  = PartialWitness::<FF>::new();
+        set_ed25519_targets(&mut pw, &targets, &sig)?;
+
+        // ── prove and verify -------------------------------------------------
+        let proof = data.prove(pw)?;
+        data.verify(proof)
+    }
+}
