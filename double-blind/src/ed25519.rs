@@ -33,7 +33,7 @@ impl Ed25519Targets {
     }
 
     pub fn signature_targets(&self) -> Vec<Target> {
-        Vec::new()
+        self.eddsa.sig.iter().map(|b| b.target).collect()
     }
 }
 
